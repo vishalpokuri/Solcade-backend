@@ -58,7 +58,7 @@ const getPotPDA = (gameId, potNumber) => {
   return potPda;
 };
 
-// Define routes
+// Get Pot details (balance, status, balance_sol);
 app.get("/pot/:gameId/:potNumber", async (req, res) => {
   try {
     const { gameId, potNumber } = req.params;
@@ -73,6 +73,7 @@ app.get("/pot/:gameId/:potNumber", async (req, res) => {
       // Return the pot balance and status
       res.json({
         gameId: potAccount.gameId,
+        potAddress: potPda.toString(),
         potNumber: potAccount.potNumber.toString(),
         balance: potAccount.totalLamports.toString(),
         status: Object.keys(potAccount.status)[0],
@@ -207,6 +208,194 @@ app.get("/pots/:gameId", async (req, res) => {
     res.json(gamePots);
   } catch (error) {
     console.error("Error fetching pots:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Pay entry fee to a pot
+app.post("/pot/pay-entry-fee", async (req, res) => {
+  try {
+    const { gameId, potNumber, amount, playerPublicKey } = req.body;
+
+    if (!gameId || !potNumber || !amount) {
+      return res
+        .status(400)
+        .json({ error: "gameId, potNumber, and amount are required" });
+    }
+
+    // Get the PDA
+    const potPda = getPotPDA(gameId, potNumber);
+
+    // Convert amount to lamports (BN format)
+    const amountBN = new BN(parseInt(amount));
+
+    // If playerPublicKey is provided, use it, otherwise use the server wallet
+    const player = playerPublicKey
+      ? new PublicKey(playerPublicKey)
+      : wallet.publicKey;
+
+    try {
+      // Call the pay_entry_fee instruction
+      const tx = await program.methods
+        .payEntryFee(amountBN)
+        .accounts({
+          potAccount: potPda,
+          player: player,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc();
+
+      res.json({
+        success: true,
+        message: `Entry fee of ${amount} lamports paid to pot for game '${gameId}' with pot number ${potNumber}`,
+        transaction: tx,
+        potAddress: potPda.toString(),
+        player: player.toString(),
+      });
+    } catch (err) {
+      if (err.message.includes("PotNotActive")) {
+        res.status(400).json({
+          error: "The pot is not active.",
+        });
+      } else {
+        throw err;
+      }
+    }
+  } catch (error) {
+    console.error("Error paying entry fee:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Close a pot (mark as ended)
+app.post("/pot/close", async (req, res) => {
+  try {
+    const { gameId, potNumber } = req.body;
+
+    if (!gameId || !potNumber) {
+      return res
+        .status(400)
+        .json({ error: "gameId and potNumber are required" });
+    }
+
+    // Get the PDA
+    const potPda = getPotPDA(gameId, potNumber);
+
+    try {
+      // Call the close_pot instruction
+      const tx = await program.methods
+        .closePot()
+        .accounts({
+          potAccount: potPda,
+        })
+        .rpc();
+
+      res.json({
+        success: true,
+        message: `Pot closed for game '${gameId}' with pot number ${potNumber}`,
+        transaction: tx,
+        potAddress: potPda.toString(),
+      });
+    } catch (err) {
+      throw err;
+    }
+  } catch (error) {
+    console.error("Error closing pot:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Distribute winnings to winners
+app.post("/pot/distribute-winners", async (req, res) => {
+  try {
+    const { gameId, potNumber, winners } = req.body;
+
+    if (
+      !gameId ||
+      !potNumber ||
+      !winners ||
+      !Array.isArray(winners) ||
+      winners.length !== 5
+    ) {
+      return res.status(400).json({
+        error:
+          "gameId, potNumber, and winners array with exactly 5 public keys are required",
+      });
+    }
+
+    // Get the PDA
+    const potPda = getPotPDA(gameId, potNumber);
+
+    // Convert winner addresses to PublicKey objects
+    const winnerPubkeys = winners.map((winner) => new PublicKey(winner));
+
+    try {
+      // Prepare accounts for the distribute_winners instruction
+      const remainingAccounts = winnerPubkeys.map((pubkey) => ({
+        pubkey,
+        isWritable: true,
+        isSigner: false,
+      }));
+
+      // Call the distribute_winners instruction
+      const tx = await program.methods
+        .distributeWinners(winnerPubkeys)
+        .accounts({
+          potAccount: potPda,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .remainingAccounts(remainingAccounts)
+        .rpc();
+
+      res.json({
+        success: true,
+        message: `Winnings distributed for game '${gameId}' with pot number ${potNumber}`,
+        transaction: tx,
+        potAddress: potPda.toString(),
+        winners: winners,
+      });
+    } catch (err) {
+      if (err.message.includes("PotNotActive")) {
+        res.status(400).json({
+          error: "The pot must be ended before distributing winnings.",
+        });
+      } else if (err.message.includes("InvalidWinnerList")) {
+        res.status(400).json({
+          error: "Invalid winner list: must contain exactly 5 addresses.",
+        });
+      } else if (err.message.includes("WinnerPubkeyMismatch")) {
+        res.status(400).json({
+          error: "Winner public key does not match the expected order.",
+        });
+      } else {
+        throw err;
+      }
+    }
+  } catch (error) {
+    console.error("Error distributing winnings:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all pots across all games
+app.get("/pots", async (req, res) => {
+  try {
+    // Get all GamePot accounts
+    const accounts = await program.account.gamePot.all();
+
+    const allPots = accounts.map((account) => ({
+      gameId: account.account.gameId,
+      potNumber: account.account.potNumber.toString(),
+      balance: account.account.totalLamports.toString(),
+      status: Object.keys(account.account.status)[0],
+      address: account.publicKey.toString(),
+      balanceSol:
+        account.account.totalLamports.toNumber() / anchor.web3.LAMPORTS_PER_SOL,
+    }));
+
+    res.json(allPots);
+  } catch (error) {
+    console.error("Error fetching all pots:", error);
     res.status(500).json({ error: error.message });
   }
 });
