@@ -8,7 +8,10 @@ import { fileURLToPath } from "url";
 import cors from "cors";
 import connectDB from "./config/db.js";
 import User from "./models/User.js";
-
+import Game from "./models/Games.js";
+import GamePot from "./models/GamePot.js";
+import Gameplay from "./models/Gameplay.js";
+import Txhash from "./models/Txhash.js";
 // Initialize Express app
 const app = express();
 const PORT = 3001;
@@ -170,7 +173,7 @@ app.get("/pot-balance/:gameId/:potNumber", async (req, res) => {
   }
 });
 
-// Initialize a new pot
+// Initialize a new pot (done by cron job for only once)
 app.post("/pot/initialize", async (req, res) => {
   try {
     const { gameId, potNumber } = req.body;
@@ -197,6 +200,19 @@ app.post("/pot/initialize", async (req, res) => {
         })
         .rpc();
 
+      //db call
+      const newGamePot = new GamePot({
+        gameId,
+        potNumber,
+        potPublicKey: potPda.toString(),
+        totalLamports: 0,
+        gameplays: [], //array of gameplays
+        status: "Active",
+        createdAt: new Date(),
+        closedAt: null,
+      });
+      await newGamePot.save();
+
       res.json({
         success: true,
         message: `Pot initialized for game '${gameId}' with pot number ${potNumber}`,
@@ -217,90 +233,6 @@ app.post("/pot/initialize", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// List all pots for a game
-app.get("/pots/:gameId", async (req, res) => {
-  try {
-    const { gameId } = req.params;
-
-    // Get all GamePot accounts
-    const accounts = await program.account.gamePot.all();
-
-    // Filter for the specific game ID
-    const gamePots = accounts
-      .filter((account) => account.account.gameId === gameId)
-      .map((account) => ({
-        gameId: account.account.gameId,
-        potNumber: account.account.potNumber.toString(),
-        balance: account.account.totalLamports.toString(),
-        status: Object.keys(account.account.status)[0],
-        address: account.publicKey.toString(),
-        balanceSol:
-          account.account.totalLamports.toNumber() /
-          anchor.web3.LAMPORTS_PER_SOL,
-      }));
-
-    res.json(gamePots);
-  } catch (error) {
-    console.error("Error fetching pots:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Pay entry fee to a pot
-// app.post("/pot/pay-entry-fee", async (req, res) => {
-//   try {
-//     const { gameId, potNumber, amount, playerPublicKey } = req.body;
-
-//     if (!gameId || !potNumber || !amount) {
-//       return res
-//         .status(400)
-//         .json({ error: "gameId, potNumber, and amount are required" });
-//     }
-
-//     // Get the PDA
-//     const potPda = getPotPDA(gameId, potNumber);
-
-//     // Convert amount to lamports (BN format)
-//     const amountBN = new BN(parseInt(amount));
-
-//     // If playerPublicKey is provided, use it, otherwise use the server wallet
-//     const player = playerPublicKey
-//       ? new PublicKey(playerPublicKey)
-//       : wallet.publicKey;
-
-//     try {
-//       // Call the pay_entry_fee instruction
-//       const tx = await program.methods
-//         .payEntryFee(amountBN)
-//         .accounts({
-//           potAccount: potPda,
-//           player: player,
-//           systemProgram: anchor.web3.SystemProgram.programId,
-//         })
-//         .rpc();
-
-//       res.json({
-//         success: true,
-//         message: `Entry fee of ${amount} lamports paid to pot for game '${gameId}' with pot number ${potNumber}`,
-//         transaction: tx,
-//         potAddress: potPda.toString(),
-//         player: player.toString(),
-//       });
-//     } catch (err) {
-//       if (err.message.includes("PotNotActive")) {
-//         res.status(400).json({
-//           error: "The pot is not active.",
-//         });
-//       } else {
-//         throw err;
-//       }
-//     }
-//   } catch (error) {
-//     console.error("Error paying entry fee:", error);
-//     res.status(500).json({ error: error.message });
-//   }
-// });
 
 // Close a pot (mark as ended)
 app.post("/pot/close", async (req, res) => {
@@ -324,6 +256,14 @@ app.post("/pot/close", async (req, res) => {
           potAccount: potPda,
         })
         .rpc();
+      //db call
+      const gamePot = await GamePot.findOne({
+        gameId,
+        potNumber,
+      });
+      gamePot.status = "Ended";
+      gamePot.closedAt = new Date();
+      await gamePot.save();
 
       res.json({
         success: true,
@@ -416,6 +356,7 @@ app.post("/pot/distribute-winners", async (req, res) => {
 app.post("/pot/create-entry-fee-transaction", async (req, res) => {
   try {
     const { gameId, potNumber, amount, playerPublicKey } = req.body;
+    console.log("req.body: ", req.body);
 
     if (!gameId || !potNumber || !amount || !playerPublicKey) {
       return res.status(400).json({
@@ -453,6 +394,34 @@ app.post("/pot/create-entry-fee-transaction", async (req, res) => {
       const serializedTransaction = Buffer.from(
         transaction.serialize({ requireAllSignatures: false })
       ).toString("base64");
+
+      const txnHash = await Txhash.create({
+        txhash: serializedTransaction,
+        isPlayed: false,
+      });
+
+      const game = await Game.findOne({ _id: gameId });
+      const fpot = await GamePot.findOne({ potPublicKey: potPda });
+      const user = await User.findOne({ publicKey: playerPublicKey });
+
+      //db call TODO(this game play will be done after score calculation)
+      const newGameplay = new Gameplay({
+        gameId: game._id, //gets objectID
+        potId: fpot._id, //
+        userId: user._id,
+        score: 0,
+        timestamp: new Date(),
+        txhash: txnHash._id,
+      });
+      await newGameplay.save();
+
+      //add amount to the pot
+      const pot = await GamePot.findOne({
+        gameId,
+        potNumber,
+      });
+      pot.totalLamports += amount;
+      await pot.save();
 
       res.json({
         success: true,
@@ -639,4 +608,20 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Wallet public key: ${wallet.publicKey.toString()}`);
   console.log(`Connected to Solana devnet: https://api.devnet.solana.com`);
+});
+
+app.post("/games/add", async (req, res) => {
+  const { gameId, description, entryFee } = req.body;
+  const game = await Game.findOne({ gameId });
+  if (!game) {
+    const newGame = new Game({ gameId, description, entryFee });
+    await newGame.save();
+    res.json({
+      success: true,
+      message: "Game added successfully",
+      game: newGame,
+    });
+  } else {
+    res.json({ success: false, message: "Game already exists" });
+  }
 });

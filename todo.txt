@@ -1,0 +1,2 @@
+1. create an endpoint to fetch all the games
+2. leaderboard logic

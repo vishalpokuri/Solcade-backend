@@ -6,7 +6,6 @@ const userGameplaySchema = new mongoose.Schema({
   score: Number,
   timestamp: { type: Date, default: Date.now },
   txhash: { type: mongoose.Schema.Types.ObjectId, ref: "Txhash" },
-  valid: Boolean, // For cheating or DC detection
 });
 
 const UserGameplay = mongoose.model("UserGameplay", userGameplaySchema);
