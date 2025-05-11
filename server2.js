@@ -5,12 +5,19 @@ import { Connection, PublicKey, Keypair } from "@solana/web3.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import cors from "cors";
 
 // Initialize Express app
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3001;
 
 app.use(express.json());
+
+app.use(
+  cors({
+    origin: "*",
+  })
+);
 
 // Setup Solana connection on devnet
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -213,59 +220,59 @@ app.get("/pots/:gameId", async (req, res) => {
 });
 
 // Pay entry fee to a pot
-app.post("/pot/pay-entry-fee", async (req, res) => {
-  try {
-    const { gameId, potNumber, amount, playerPublicKey } = req.body;
+// app.post("/pot/pay-entry-fee", async (req, res) => {
+//   try {
+//     const { gameId, potNumber, amount, playerPublicKey } = req.body;
 
-    if (!gameId || !potNumber || !amount) {
-      return res
-        .status(400)
-        .json({ error: "gameId, potNumber, and amount are required" });
-    }
+//     if (!gameId || !potNumber || !amount) {
+//       return res
+//         .status(400)
+//         .json({ error: "gameId, potNumber, and amount are required" });
+//     }
 
-    // Get the PDA
-    const potPda = getPotPDA(gameId, potNumber);
+//     // Get the PDA
+//     const potPda = getPotPDA(gameId, potNumber);
 
-    // Convert amount to lamports (BN format)
-    const amountBN = new BN(parseInt(amount));
+//     // Convert amount to lamports (BN format)
+//     const amountBN = new BN(parseInt(amount));
 
-    // If playerPublicKey is provided, use it, otherwise use the server wallet
-    const player = playerPublicKey
-      ? new PublicKey(playerPublicKey)
-      : wallet.publicKey;
+//     // If playerPublicKey is provided, use it, otherwise use the server wallet
+//     const player = playerPublicKey
+//       ? new PublicKey(playerPublicKey)
+//       : wallet.publicKey;
 
-    try {
-      // Call the pay_entry_fee instruction
-      const tx = await program.methods
-        .payEntryFee(amountBN)
-        .accounts({
-          potAccount: potPda,
-          player: player,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .rpc();
+//     try {
+//       // Call the pay_entry_fee instruction
+//       const tx = await program.methods
+//         .payEntryFee(amountBN)
+//         .accounts({
+//           potAccount: potPda,
+//           player: player,
+//           systemProgram: anchor.web3.SystemProgram.programId,
+//         })
+//         .rpc();
 
-      res.json({
-        success: true,
-        message: `Entry fee of ${amount} lamports paid to pot for game '${gameId}' with pot number ${potNumber}`,
-        transaction: tx,
-        potAddress: potPda.toString(),
-        player: player.toString(),
-      });
-    } catch (err) {
-      if (err.message.includes("PotNotActive")) {
-        res.status(400).json({
-          error: "The pot is not active.",
-        });
-      } else {
-        throw err;
-      }
-    }
-  } catch (error) {
-    console.error("Error paying entry fee:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
+//       res.json({
+//         success: true,
+//         message: `Entry fee of ${amount} lamports paid to pot for game '${gameId}' with pot number ${potNumber}`,
+//         transaction: tx,
+//         potAddress: potPda.toString(),
+//         player: player.toString(),
+//       });
+//     } catch (err) {
+//       if (err.message.includes("PotNotActive")) {
+//         res.status(400).json({
+//           error: "The pot is not active.",
+//         });
+//       } else {
+//         throw err;
+//       }
+//     }
+//   } catch (error) {
+//     console.error("Error paying entry fee:", error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
 // Close a pot (mark as ended)
 app.post("/pot/close", async (req, res) => {
@@ -377,28 +384,226 @@ app.post("/pot/distribute-winners", async (req, res) => {
   }
 });
 
-// Get all pots across all games
-app.get("/pots", async (req, res) => {
+// Create unsigned transaction for client to sign with wallet adapter
+app.post("/pot/create-entry-fee-transaction", async (req, res) => {
   try {
-    // Get all GamePot accounts
-    const accounts = await program.account.gamePot.all();
+    const { gameId, potNumber, amount, playerPublicKey } = req.body;
 
-    const allPots = accounts.map((account) => ({
-      gameId: account.account.gameId,
-      potNumber: account.account.potNumber.toString(),
-      balance: account.account.totalLamports.toString(),
-      status: Object.keys(account.account.status)[0],
-      address: account.publicKey.toString(),
-      balanceSol:
-        account.account.totalLamports.toNumber() / anchor.web3.LAMPORTS_PER_SOL,
-    }));
+    if (!gameId || !potNumber || !amount || !playerPublicKey) {
+      return res.status(400).json({
+        error: "gameId, potNumber, amount, and playerPublicKey are required",
+      });
+    }
 
-    res.json(allPots);
+    // Get the PDA
+    const potPda = getPotPDA(gameId, potNumber);
+    console.log("Pot PDA: ", potPda.toString());
+
+    // Convert amount to lamports (BN format)
+    const amountBN = new BN(parseInt(amount));
+
+    // Parse player public key
+    const player = new PublicKey(playerPublicKey);
+
+    try {
+      // Create transaction for pay_entry_fee instruction
+      const transaction = await program.methods
+        .payEntryFee(amountBN)
+        .accounts({
+          potAccount: potPda,
+          player: player,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .transaction();
+
+      // Get recent blockhash for transaction
+      const { blockhash } = await connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = player;
+
+      // Serialize the transaction to base64
+      const serializedTransaction = Buffer.from(
+        transaction.serialize({ requireAllSignatures: false })
+      ).toString("base64");
+
+      res.json({
+        success: true,
+        message: `Transaction created for entry fee payment of ${amount} lamports`,
+        serializedTransaction,
+        potAddress: potPda.toString(),
+      });
+      console.log("Txn: ", serializedTransaction);
+    } catch (err) {
+      if (err.message.includes("PotNotActive")) {
+        res.status(400).json({
+          error: "The pot is not active.",
+        });
+      } else {
+        throw err;
+      }
+    }
   } catch (error) {
-    console.error("Error fetching all pots:", error);
+    console.error("Error creating entry fee transaction:", error);
     res.status(500).json({ error: error.message });
   }
 });
+
+// Verify and record a completed payment transaction
+app.post("/pot/verify-payment", async (req, res) => {
+  try {
+    const { gameId, potNumber, signature, playerPublicKey } = req.body;
+
+    if (!gameId || !potNumber || !signature || !playerPublicKey) {
+      return res.status(400).json({
+        error: "gameId, potNumber, signature, and playerPublicKey are required",
+      });
+    }
+
+    try {
+      // Get the transaction details
+      const transactionDetails = await connection.getTransaction(signature, {
+        commitment: "confirmed",
+      });
+
+      if (!transactionDetails) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+
+      // Verify the transaction was successful
+      if (!transactionDetails.meta || transactionDetails.meta.err) {
+        return res.status(400).json({ error: "Transaction failed" });
+      }
+
+      // Get the PDA
+      const potPda = getPotPDA(gameId, potNumber);
+
+      // Verify this transaction was for our program
+      const programIndex =
+        transactionDetails.transaction.message.accountKeys.findIndex((key) =>
+          key.equals(programId)
+        );
+
+      if (programIndex === -1) {
+        return res
+          .status(400)
+          .json({ error: "Transaction did not involve our program" });
+      }
+
+      // Verify player public key is in the transaction
+      const playerPubkey = new PublicKey(playerPublicKey);
+      const playerIndex =
+        transactionDetails.transaction.message.accountKeys.findIndex((key) =>
+          key.equals(playerPubkey)
+        );
+
+      if (playerIndex === -1) {
+        return res
+          .status(400)
+          .json({ error: "Player was not a participant in this transaction" });
+      }
+
+      // TODO: Store the payment details in your database
+      // const paymentRecord = await db.payments.create({
+      //   gameId,
+      //   potNumber,
+      //   potAddress: potPda.toString(),
+      //   playerWallet: playerPublicKey,
+      //   signature,
+      //   amount,
+      //   timestamp: new Date()
+      // });
+
+      // For now, just return success
+      res.json({
+        success: true,
+        message: `Payment verified for game '${gameId}' with pot number ${potNumber}`,
+        signature,
+        potAddress: potPda.toString(),
+        player: playerPublicKey,
+        // paymentId: paymentRecord.id, // If you're using a database
+        timestamp: new Date(),
+      });
+    } catch (err) {
+      throw err;
+    }
+  } catch (error) {
+    console.error("Error verifying payment:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// For admin/server-initiated payments
+app.post("/pot/pay-entry-fee", async (req, res) => {
+  try {
+    const { gameId, potNumber, amount } = req.body;
+
+    if (!gameId || !potNumber || !amount) {
+      return res
+        .status(400)
+        .json({ error: "gameId, potNumber, and amount are required" });
+    }
+
+    // Get the PDA
+    const potPda = getPotPDA(gameId, potNumber);
+
+    // Convert amount to lamports (BN format)
+    const amountBN = new BN(parseInt(amount));
+
+    try {
+      // Call the pay_entry_fee instruction using server wallet
+      const tx = await program.methods
+        .payEntryFee(amountBN)
+        .accounts({
+          potAccount: potPda,
+          player: wallet.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .rpc();
+
+      res.json({
+        success: true,
+        message: `Server paid entry fee of ${amount} lamports to pot for game '${gameId}' with pot number ${potNumber}`,
+        transaction: tx,
+        potAddress: potPda.toString(),
+        player: wallet.publicKey.toString(),
+      });
+    } catch (err) {
+      if (err.message.includes("PotNotActive")) {
+        res.status(400).json({
+          error: "The pot is not active.",
+        });
+      } else {
+        throw err;
+      }
+    }
+  } catch (error) {
+    console.error("Error paying entry fee:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// // Get all pots across all games
+// app.get("/pots", async (req, res) => {
+//   try {
+//     // Get all GamePot accounts
+//     const accounts = await program.account.gamePot.all();
+
+//     const allPots = accounts.map((account) => ({
+//       gameId: account.account.gameId,
+//       potNumber: account.account.potNumber.toString(),
+//       balance: account.account.totalLamports.toString(),
+//       status: Object.keys(account.account.status)[0],
+//       address: account.publicKey.toString(),
+//       balanceSol:
+//         account.account.totalLamports.toNumber() / anchor.web3.LAMPORTS_PER_SOL,
+//     }));
+
+//     res.json(allPots);
+//   } catch (error) {
+//     console.error("Error fetching all pots:", error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
 // Start server
 app.listen(PORT, () => {
