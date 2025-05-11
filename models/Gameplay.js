@@ -5,7 +5,7 @@ const userGameplaySchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   score: Number,
   timestamp: { type: Date, default: Date.now },
-  txHash: String, // Entry fee payment TX
+  txhash: { type: mongoose.Schema.Types.ObjectId, ref: "Txhash" },
   valid: Boolean, // For cheating or DC detection
 });
 

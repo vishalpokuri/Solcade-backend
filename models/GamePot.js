@@ -5,6 +5,7 @@ const gamePotSchema = new mongoose.Schema({
   potNumber: Number, // Equivalent to pot_number
   potPublicKey: String, // On-chain PDA public key of the pot
   totalLamports: Number,
+  gameplays: [{ type: mongoose.Schema.Types.ObjectId, ref: "Gameplay" }],
   status: { type: String, enum: ["Active", "Ended"], default: "Active" },
   createdAt: { type: Date, default: Date.now },
   closedAt: Date, // Set when status becomes Ended

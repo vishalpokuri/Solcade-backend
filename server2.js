@@ -6,6 +6,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import cors from "cors";
+import connectDB from "./config/db.js";
+import User from "./models/User.js";
 
 // Initialize Express app
 const app = express();
@@ -64,6 +66,32 @@ const getPotPDA = (gameId, potNumber) => {
 
   return potPda;
 };
+
+app.get("/user/existOrCreate/:publicKey", async (req, res) => {
+  const { publicKey } = req.params;
+  const user = await User.findOne({ publicKey });
+  if (!user) {
+    const newUser = new User({ publicKey });
+    await newUser.save();
+    const json = {
+      exists: false,
+      status: "success",
+      user: newUser,
+      message: "New user created successfully",
+    };
+
+    res.json(json);
+  } else {
+    const json = {
+      exists: true,
+      status: "success",
+      user: user,
+      message: "User already exists",
+    };
+
+    res.json(json);
+  }
+});
 
 // Get Pot details (balance, status, balance_sol);
 app.get("/pot/:gameId/:potNumber", async (req, res) => {
@@ -607,6 +635,7 @@ app.post("/pot/pay-entry-fee", async (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
+  connectDB();
   console.log(`Server running on port ${PORT}`);
   console.log(`Wallet public key: ${wallet.publicKey.toString()}`);
   console.log(`Connected to Solana devnet: https://api.devnet.solana.com`);

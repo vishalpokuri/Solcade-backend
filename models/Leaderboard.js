@@ -5,14 +5,7 @@ const leaderboardSchema = new mongoose.Schema({
   potId: { type: mongoose.Schema.Types.ObjectId, ref: "GamePot" },
   startTime: Date,
   endTime: Date,
-  players: [
-    {
-      userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-      score: Number,
-      rank: Number,
-      timestamp: Date, // Time of score submission
-    },
-  ],
+  gameplays: [{ type: mongoose.Schema.Types.ObjectId, ref: "Gameplay" }],
   isFinalized: Boolean, // Once prizes are distributed
   prizeDistribution: {
     first: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // publicKey of 1st
@@ -33,3 +26,5 @@ const leaderboardSchema = new mongoose.Schema({
 const Leaderboard = mongoose.model("Leaderboard", leaderboardSchema);
 
 export default Leaderboard;
+
+//TODO:What if sufficient players are not there?
