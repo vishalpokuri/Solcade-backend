@@ -1,0 +1,197 @@
+{
+  "address": "uqF9WXM1GkHE2nKFAPUVX1BSiWys59yzuWZW9GR9Fky",
+  "metadata": {
+    "name": "arcade_game",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "check_pot_status",
+      "discriminator": [89, 40, 146, 137, 27, 242, 185, 248],
+      "accounts": [
+        {
+          "name": "pot_account"
+        }
+      ],
+      "args": [],
+      "returns": "u64"
+    },
+    {
+      "name": "close_pot",
+      "discriminator": [214, 103, 62, 202, 132, 229, 27, 86],
+      "accounts": [
+        {
+          "name": "pot_account",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "distribute_winners",
+      "discriminator": [113, 5, 211, 130, 183, 247, 68, 77],
+      "accounts": [
+        {
+          "name": "pot_account",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "winners",
+          "type": {
+            "vec": "pubkey"
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_pot",
+      "discriminator": [142, 71, 252, 186, 244, 59, 203, 118],
+      "accounts": [
+        {
+          "name": "pot_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 116]
+              },
+              {
+                "kind": "arg",
+                "path": "game_id"
+              },
+              {
+                "kind": "arg",
+                "path": "pot_number"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "game_id",
+          "type": "string"
+        },
+        {
+          "name": "pot_number",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "pay_entry_fee",
+      "discriminator": [18, 88, 91, 123, 150, 239, 147, 161],
+      "accounts": [
+        {
+          "name": "pot_account",
+          "writable": true
+        },
+        {
+          "name": "player",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "GamePot",
+      "discriminator": [218, 87, 244, 122, 249, 131, 38, 179]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "PotNotActive",
+      "msg": "The pot is not active."
+    },
+    {
+      "code": 6001,
+      "name": "InvalidWinnerList",
+      "msg": "Invalid winner list: must contain exactly 5 addresses."
+    },
+    {
+      "code": 6002,
+      "name": "WinnerPubkeyMismatch",
+      "msg": "Winner public key does not match the expected order."
+    },
+    {
+      "code": 6003,
+      "name": "MathError",
+      "msg": "Overflow or underflow error during lamport math."
+    }
+  ],
+  "types": [
+    {
+      "name": "GamePot",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "game_id",
+            "type": "string"
+          },
+          {
+            "name": "pot_number",
+            "type": "u64"
+          },
+          {
+            "name": "total_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "PotStatus"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PotStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Ended"
+          }
+        ]
+      }
+    }
+  ]
+}
