@@ -12,6 +12,10 @@ import Game from "./models/Games.js";
 import GamePot from "./models/GamePot.js";
 import Gameplay from "./models/Gameplay.js";
 import Txhash from "./models/Txhash.js";
+
+import { schedule } from "node-cron";
+import axios from "axios";
+
 // Initialize Express app
 const app = express();
 const PORT = 3001;
@@ -61,7 +65,7 @@ const getPotPDA = (gameId, potNumber) => {
   const [potPda] = PublicKey.findProgramAddressSync(
     [
       Buffer.from("pot"),
-      Buffer.from(gameId),
+      Buffer.from(gameId), //ObjectID of game
       potNumberBN.toArrayLike(Buffer, "le", 8),
     ],
     programId
@@ -340,6 +344,7 @@ app.post("/pot/close", async (req, res) => {
 
     // Get the PDA
     const potPda = getPotPDA(gameId, potNumber);
+    console.log(potPda);
 
     try {
       // Call the close_pot instruction
@@ -357,6 +362,7 @@ app.post("/pot/close", async (req, res) => {
       gamePot.status = "Ended";
       gamePot.closedAt = new Date();
       await gamePot.save();
+      console.log(gamePot);
 
       res.json({
         success: true,
@@ -744,11 +750,61 @@ app.get("/games/all", async (req, res) => {
 // });
 
 // Start server
+// Start server
 app.listen(PORT, () => {
   connectDB();
   console.log(`Server running on port ${PORT}`);
   console.log(`Wallet public key: ${wallet.publicKey.toString()}`);
   console.log(`Connected to Solana devnet: https://api.devnet.solana.com`);
+
+  const GAME_Object_ID = "68210f89681811dd521231f4";
+  const gameId = "flappy_bird";
+
+  schedule("*/1 * * * *", async () => {
+    console.log(`Cron triggered at ${new Date().toISOString()}`);
+    let potNumber;
+
+    try {
+      // Fetch latest pot
+      const response = await fetch(
+        `http://localhost:3001/pot/latest/${gameId}`
+      );
+      const data = await response.json();
+      const latestPot = data.pot;
+      potNumber = latestPot.potNumber;
+      console.log(potNumber);
+
+      // Close if not already closed
+      if (latestPot.status !== "Ended") {
+        const closeRes = await fetch(`http://localhost:3001/pot/close`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gameId: GAME_Object_ID, potNumber }),
+        });
+
+        const closeData = await closeRes.json();
+        console.log(`Closed pot ${potNumber}:`, closeData.message);
+      } else {
+        console.log(`Pot ${potNumber} already closed`);
+      }
+
+      // Initialize next pot
+      const nextPotNumber = potNumber + 1;
+      const initRes = await fetch(`http://localhost:3001/pot/initialize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gameId: GAME_Object_ID,
+          potNumber: nextPotNumber,
+        }),
+      });
+
+      const initData = await initRes.json();
+      console.log(`Initialized pot ${nextPotNumber}:`, initData.message);
+    } catch (err) {
+      console.error("Cron job error:", err.message);
+    }
+  });
 });
 
 app.post("/games/add", async (req, res) => {
