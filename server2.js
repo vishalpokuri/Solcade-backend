@@ -14,7 +14,6 @@ import Gameplay from "./models/Gameplay.js";
 import Txhash from "./models/Txhash.js";
 
 import { schedule } from "node-cron";
-import axios from "axios";
 
 // Initialize Express app
 const app = express();
@@ -73,6 +72,44 @@ const getPotPDA = (gameId, potNumber) => {
 
   return potPda;
 };
+
+// function formatTimeRemaining(ms) {
+//   const seconds = Math.floor(ms / 1000);
+//   const minutes = Math.floor(seconds / 60);
+//   const remainingSeconds = seconds % 60;
+
+//   return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+// }
+
+// // Add this endpoint to your Express app
+// app.get("/api/next-cron-time", (req, res) => {
+//   if (!nextCronTime) {
+//     res.status(404).json({ error: "Next cron time not set" });
+//     return;
+//   }
+
+//   const now = new Date();
+//   const timeRemaining = nextCronTime - now;
+
+//   if (timeRemaining <= 0) {
+//     res.json({
+//       timeRemaining: 0,
+//       nextCronTime: nextCronTime.toISOString(),
+//       message: "Cron job executing now or scheduled time has passed",
+//     });
+//   } else {
+//     res.json({
+//       timeRemaining: timeRemaining,
+//       nextCronTime: nextCronTime.toISOString(),
+//       seconds: Math.floor(timeRemaining / 1000),
+//       formatted: formatTimeRemaining(timeRemaining),
+//     });
+//   }
+// });
+
+// let nextCronTime = null;
+
+// Function to format time remaining in a human-readable format
 
 app.get("/user/existOrCreate/:publicKey", async (req, res) => {
   const { publicKey } = req.params;
@@ -150,6 +187,33 @@ app.get("/pot/latest/:gameId", async (req, res) => {
 });
 
 //leaderboard logic
+// Public leaderboard without user-specific details
+app.get("/leaderboard/:gameId/:potId", async (req, res) => {
+  try {
+    const { gameId, potId } = req.params;
+
+    const leaderboard = await Gameplay.find({
+      gameId,
+      potId,
+      score: { $gt: 0 },
+    })
+      .sort({ score: -1, timestamp: 1 })
+      .populate({ path: "userId", select: "-__v" })
+      .select("-gameId -potId -txhash -__v");
+
+    const totalGamesPlayed = await Gameplay.countDocuments({ gameId, potId });
+    const uniquePlayers = await Gameplay.distinct("userId", { gameId, potId });
+
+    res.json({
+      leaderboard,
+      totalGamesPlayed,
+      uniquePlayers: uniquePlayers.length,
+    });
+  } catch (error) {
+    console.error("Error fetching public leaderboard:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
 // Leaderboard with user-specific stats
 app.get("/leaderboard/:gameId/:potId/user/:userId", async (req, res) => {
   try {
@@ -382,23 +446,24 @@ app.post("/pot/close", async (req, res) => {
 // Distribute winnings to winners
 app.post("/pot/distribute-winners", async (req, res) => {
   try {
-    const { gameId, potNumber, winners } = req.body;
+    const { gameId, potPublicKey, winners } = req.body;
+
+    console.log(potPublicKey);
 
     if (
       !gameId ||
-      !potNumber ||
+      !potPublicKey ||
       !winners ||
       !Array.isArray(winners) ||
       winners.length !== 5
     ) {
       return res.status(400).json({
         error:
-          "gameId, potNumber, and winners array with exactly 5 public keys are required",
+          "gameId, potPublicKey, and winners array with exactly 5 public keys are required",
       });
     }
 
-    // Get the PDA
-    const potPda = getPotPDA(gameId, potNumber);
+    //winnerPubkeys is an array [pk1, pk2, pk3...];
 
     // Convert winner addresses to PublicKey objects
     const winnerPubkeys = winners.map((winner) => new PublicKey(winner));
@@ -415,7 +480,7 @@ app.post("/pot/distribute-winners", async (req, res) => {
       const tx = await program.methods
         .distributeWinners(winnerPubkeys)
         .accounts({
-          potAccount: potPda,
+          potAccount: potPublicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
         })
         .remainingAccounts(remainingAccounts)
@@ -425,7 +490,7 @@ app.post("/pot/distribute-winners", async (req, res) => {
         success: true,
         message: `Winnings distributed for game '${gameId}' with pot number ${potNumber}`,
         transaction: tx,
-        potAddress: potPda.toString(),
+        potAddress: potPublicKey.toString(),
         winners: winners,
       });
     } catch (err) {
@@ -749,7 +814,22 @@ app.get("/games/all", async (req, res) => {
 //   }
 // });
 
-// Start server
+const DEFAULT_PUBLIC_KEY = "61zih9sZ5LCthmUZ1rcDoeGdSifZ6JnYESi2o6wmaQew";
+
+function getTop5PublicKeys(response) {
+  const { leaderboard } = response;
+
+  const top5 = leaderboard
+    .slice(0, 5)
+    .map((entry) => entry.userId?.publicKey || DEFAULT_PUBLIC_KEY);
+
+  while (top5.length < 5) {
+    top5.push(DEFAULT_PUBLIC_KEY);
+  }
+
+  return top5;
+}
+
 // Start server
 app.listen(PORT, () => {
   connectDB();
@@ -774,6 +854,40 @@ app.listen(PORT, () => {
       potNumber = latestPot.potNumber;
       console.log(potNumber);
 
+      //get winners first
+      const potId = await GamePot.findOne({
+        gameId: GAME_Object_ID,
+        potNumber,
+      });
+
+      //leaderboard fetch
+
+      const response2 = await fetch(
+        `http://localhost:3001/leaderboard/${GAME_Object_ID}/${potId._id}/`
+      );
+      const data2 = await response2.json();
+      const result = getTop5PublicKeys(data2);
+      console.log(result); // your leaderboard response
+
+      console.log("Pot: ", potId);
+
+      //perform payouts
+      const response3 = await fetch(
+        `http://localhost:3001/pot/distribute-winners`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            gameId: GAME_Object_ID,
+            potPublicKey: potId.potPublicKey,
+            winners: result,
+          }),
+        }
+      );
+      const data3 = await response3.json();
+      console.log(data3);
       // Close if not already closed
       if (latestPot.status !== "Ended") {
         const closeRes = await fetch(`http://localhost:3001/pot/close`, {
