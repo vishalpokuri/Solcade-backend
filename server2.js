@@ -146,28 +146,6 @@ app.get("/pot/latest/:gameId", async (req, res) => {
 });
 
 //leaderboard logic
-// Public leaderboard without user-specific details
-app.get("/leaderboard/:gameId/:potId", async (req, res) => {
-  try {
-    const { gameId, potId } = req.params;
-
-    const leaderboard = await Gameplay.find({ gameId, potId })
-      .sort({ score: -1 })
-      .populate("userId", "username");
-
-    const totalGamesPlayed = await Gameplay.countDocuments({ gameId, potId });
-    const uniquePlayers = await Gameplay.distinct("userId", { gameId, potId });
-
-    res.json({
-      leaderboard,
-      totalGamesPlayed,
-      uniquePlayers: uniquePlayers.length,
-    });
-  } catch (error) {
-    console.error("Error fetching public leaderboard:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
 // Leaderboard with user-specific stats
 app.get("/leaderboard/:gameId/:potId/user/:userId", async (req, res) => {
   try {
@@ -177,8 +155,9 @@ app.get("/leaderboard/:gameId/:potId/user/:userId", async (req, res) => {
       potId,
       score: { $gt: 0 },
     })
-      .sort({ score: -1 })
-      .populate("userId", "username");
+      .sort({ score: -1, timestamp: 1 })
+      .populate({ path: "userId", select: "-__v" })
+      .select("-gameId -potId -txhash -__v");
 
     const totalGamesPlayed = await Gameplay.countDocuments({
       gameId,
@@ -773,10 +752,17 @@ app.listen(PORT, () => {
 });
 
 app.post("/games/add", async (req, res) => {
-  const { gameId, description, entryFee } = req.body;
+  const { gameId, description, entryFee, logo, genre, name } = req.body;
   const game = await Game.findOne({ gameId });
   if (!game) {
-    const newGame = new Game({ gameId, description, entryFee });
+    const newGame = new Game({
+      gameId,
+      description,
+      entryFee,
+      logo,
+      genre,
+      name,
+    });
     await newGame.save();
     res.json({
       success: true,
