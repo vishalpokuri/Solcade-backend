@@ -814,17 +814,15 @@ app.get("/games/all", async (req, res) => {
 //   }
 // });
 
-const DEFAULT_PUBLIC_KEY = "61zih9sZ5LCthmUZ1rcDoeGdSifZ6JnYESi2o6wmaQew";
-
 function getTop5PublicKeys(response) {
   const { leaderboard } = response;
 
   const top5 = leaderboard
     .slice(0, 5)
-    .map((entry) => entry.userId?.publicKey || DEFAULT_PUBLIC_KEY);
+    .map((entry) => entry.userId?.publicKey || process.env.DEFAULT_PUBLIC_KEY);
 
   while (top5.length < 5) {
-    top5.push(DEFAULT_PUBLIC_KEY);
+    top5.push(process.env.DEFAULT_PUBLIC_KEY);
   }
 
   return top5;
@@ -847,7 +845,7 @@ app.listen(PORT, () => {
     try {
       // Fetch latest pot
       const response = await fetch(
-        `http://localhost:3001/pot/latest/${gameId}`
+        `${process.env.SERVER_URL}/pot/latest/${gameId}`
       );
       const data = await response.json();
       const latestPot = data.pot;
@@ -863,7 +861,7 @@ app.listen(PORT, () => {
       //leaderboard fetch
 
       const response2 = await fetch(
-        `http://localhost:3001/leaderboard/${GAME_Object_ID}/${potId._id}/`
+        `${process.env.SERVER_URL}/leaderboard/${GAME_Object_ID}/${potId._id}/`
       );
       const data2 = await response2.json();
       const result = getTop5PublicKeys(data2);
@@ -873,7 +871,7 @@ app.listen(PORT, () => {
 
       //perform payouts
       const response3 = await fetch(
-        `http://localhost:3001/pot/distribute-winners`,
+        `${process.env.SERVER_URL}/pot/distribute-winners`,
         {
           method: "POST",
           headers: {
@@ -890,7 +888,7 @@ app.listen(PORT, () => {
       console.log(data3);
       // Close if not already closed
       if (latestPot.status !== "Ended") {
-        const closeRes = await fetch(`http://localhost:3001/pot/close`, {
+        const closeRes = await fetch(`${process.env.SERVER_URL}/pot/close`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ gameId: GAME_Object_ID, potNumber }),
@@ -904,7 +902,7 @@ app.listen(PORT, () => {
 
       // Initialize next pot
       const nextPotNumber = potNumber + 1;
-      const initRes = await fetch(`http://localhost:3001/pot/initialize`, {
+      const initRes = await fetch(`${process.env.SERVER_URL}/pot/initialize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
